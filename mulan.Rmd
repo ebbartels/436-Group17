@@ -92,7 +92,8 @@ server = function(input, output) {
   )
   
   output$table = renderDT(
-    makeTable(input$top_n), rownames = FALSE
+    makeTable(input$top_n), 
+    rownames = FALSE
   )
 }
 
