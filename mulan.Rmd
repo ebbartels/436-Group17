@@ -61,7 +61,7 @@ makePlot = function(x) {
 ```{r}
 # creates table that lists top x openings for each rating group
 makeTable = function(x) {
-  chess_grouped_rating %>%  
+  chess %>%  
     group_by(rating_group, opening_name) %>%
     summarise(count = n(), .groups = "drop") %>% 
     arrange(rating_group, desc(count)) %>% 
