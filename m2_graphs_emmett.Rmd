@@ -15,7 +15,7 @@ library(dplyr)
 library(tidyr)
 library(stringr)
 
-chess_data = read.csv("C:\\Users\\emmet\\Downloads\\games.csv")
+chess_data = read_csv("https://uwmadison.box.com/shared/static/8y8ijsi92qugjmjyv1qxiqt2pnmp3h8i.csv")
 ```
 
 ```{r}
