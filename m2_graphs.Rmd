@@ -1,0 +1,187 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(stringr)
+
+chess_data = read.csv("C:\\Users\\emmet\\Downloads\\games.csv")
+```
+
+```{r}
+
+# Filter for the top 10 most common openings
+top_openings <- chess_data %>%
+  count(opening_name, sort = TRUE) %>%
+  top_n(10, n) %>%
+  pull(opening_name)
+
+filtered_data <- chess_data %>%
+  filter(opening_name %in% top_openings) 
+
+# Count wins for each result type per opening
+win_counts <- filtered_data %>%
+  count(opening_name, winner) %>%
+  group_by(opening_name) %>%
+  mutate(Percentage = n / sum(n) * 100)
+
+```
+
+
+```{r}
+ggplot(win_counts, aes(x = reorder(opening_name, -Percentage), y = Percentage, fill = winner)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = "Win Counts for Top 10 Openings by Result",
+       x = "Opening Name",
+       y = "Percentage") +
+  scale_fill_manual(values = c("black" = "blue", "draw" = "orange", "white" = "green")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```{r}
+# Define the function
+time_control <- function(time) {
+  time <- as.integer(str_split(time, "\\+", simplify = TRUE)[,1])  # Extract the first part before "+"
+  if (time <= 2) {
+    return("Bullet")
+  } else if (time >= 3 & time < 10) {
+    return("Blitz")
+  } else if (time >= 10 & time <= 60) {
+    return("Rapid")
+  } else {
+    return("Classical")
+  }
+}
+
+# Apply the function to a dataframe column
+chess_data <- chess_data %>%
+  mutate(time_control = sapply(increment_code, time_control))
+
+```
+
+```{r}
+win_counts_time <- chess_data %>%
+  count(time_control, winner) %>%
+  group_by(time_control) %>%
+  mutate(Percentage = n / sum(n) * 100)
+
+ggplot(win_counts_time, aes(x = reorder(time_control, -Percentage), y = Percentage, fill = winner)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = "Win Counts for Time Controls by Result",
+       x = "Time Control",
+       y = "Percentage") +
+  scale_fill_manual(values = c("black" = "blue", "draw" = "orange", "white" = "green")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+
+# Function to extract square moves
+extract_squares <- function(moves) {
+  move_list <- unlist(str_split(moves, " "))  # Split moves into individual elements
+  squares <- str_extract(move_list, "[a-h][1-8]")  # Extract only valid chessboard squares
+  return(squares[!is.na(squares)])  # Remove NAs
+}
+
+# Apply extraction function to the entire column and count occurrences
+square_counts <- chess_data %>%
+  rowwise() %>%
+  mutate(squares = list(extract_squares(moves))) %>%
+  unnest(squares) %>%
+  count(squares)
+
+# Convert square notation to chessboard coordinates
+square_counts <- square_counts %>%
+  mutate(
+    file = substr(squares, 1, 1),  # Extract file (a-h)
+    rank = as.integer(substr(squares, 2, 2))  # Extract rank (1-8)
+  )
+
+# Map file (a-h) to numeric x-axis (1-8)
+square_counts <- square_counts %>%
+  mutate(x = match(file, letters[1:8]), y = rank)
+
+# Create the heatmap
+ggplot(square_counts, aes(x = x, y = y, fill = n)) +
+  geom_tile(color = "black") +
+  scale_fill_gradient(low = "white", high = "red") +
+  scale_x_continuous(breaks = 1:8, labels = letters[1:8]) +  # Chessboard files (a-h)
+  scale_y_continuous(breaks = 1:8, labels = 1:8) +  # Chessboard ranks (1-8)
+  theme_minimal() +
+  labs(title = "Chess Move Heatmap", x = "File", y = "Rank", fill = "Move Frequency") +
+  coord_fixed()  # Keep square aspect ratio
+
+```
+
+
+```{r}
+
+# Sample dataset (Replace with your actual dataset)
+estimate_duration_vectorized <- function(last_move_at, created_at, increment_code, turns) {
+  time_parts <- strsplit(increment_code, "\\+")
+  start <- as.numeric(sapply(time_parts, function(x) x[1]))
+  bonus <- as.numeric(sapply(time_parts, function(x) x[2]))
+
+  condition1 <- last_move_at == created_at
+  durations <- ifelse(
+    condition1, 
+    2 * (start * 60 + bonus * (turns / 2)) / 60, 
+    (last_move_at - created_at) / 60
+  )
+  return(durations)
+}
+
+chess_data$game_duration <- estimate_duration_vectorized(
+  chess_data$last_move_at, 
+  chess_data$created_at, 
+  chess_data$increment_code, 
+  chess_data$turns
+)
+
+chess_data_filtered_time = chess_data %>% 
+  filter(game_duration < 1e6)
+
+ggplot(chess_data_filtered_time, aes(x = white_rating, y = black_rating)) +
+  geom_point(aes(color = game_duration)) +
+  #geom_smooth(method = "lm", se = FALSE, color = "red") +
+  theme_minimal() +
+  labs(title = "Black Rating vs White Rating", x = "White Player Rating", y = "Black Rating")
+
+
+```
+
+```{r}
+chess_data = chess_data %>% 
+  mutate(rating_diff = white_rating - black_rating)
+
+chess_data_filtered_time = chess_data %>% 
+  filter(game_duration < 1e6)
+
+
+ggplot(chess_data_filtered_time, aes(x = rating_diff, y = game_duration)) +
+  geom_point(aes(color = time_control)) +
+  #geom_smooth(method = "lm", se = FALSE, color = "red") +
+  theme_minimal() +
+  labs(title = "Game Duration vs Rating Difference", x = "Rating Difference", y = "Game Duration")
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
