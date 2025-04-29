@@ -1,0 +1,278 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+library(shiny)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(stringr)
+
+# Load the data
+chess_data <- read.csv("C:\\Users\\emmet\\Downloads\\games.csv")
+
+# Preprocessing
+top_openings <- chess_data %>%
+  count(opening_name, sort = TRUE) %>%
+  top_n(10, n) %>%
+  pull(opening_name)
+
+openings <- unique(chess_data$opening_name)
+
+# Time control function
+time_control <- function(time) {
+  time <- as.integer(str_split(time, "\\+", simplify = TRUE)[,1])
+  if (time <= 2) {
+    return("Bullet")
+  } else if (time >= 3 & time < 10) {
+    return("Blitz")
+  } else if (time >= 10 & time <= 60) {
+    return("Rapid")
+  } else {
+    return("Classical")
+  }
+}
+
+chess_data <- chess_data %>%
+  mutate(time_control = sapply(increment_code, time_control))
+
+# Estimate game duration
+estimate_duration_vectorized <- function(last_move_at, created_at, increment_code, turns) {
+  time_parts <- strsplit(increment_code, "\\+")
+  start <- as.numeric(sapply(time_parts, function(x) x[1]))
+  bonus <- as.numeric(sapply(time_parts, function(x) x[2]))
+  
+  condition1 <- last_move_at == created_at
+  durations <- ifelse(
+    condition1, 
+    2 * (start * 60 + bonus * (turns / 2)) / 60, 
+    (last_move_at - created_at) / 60
+  )
+  return(durations)
+}
+
+chess_data$game_duration <- estimate_duration_vectorized(
+  chess_data$last_move_at, 
+  chess_data$created_at, 
+  chess_data$increment_code, 
+  chess_data$turns
+)
+
+chess_data <- chess_data %>%
+  mutate(rating_diff = white_rating - black_rating)
+
+chess_data$first_white_move <- sapply(strsplit(chess_data$moves, " "), function(x) x[1])
+chess_data$first_black_move <- sapply(strsplit(chess_data$moves, " "), function(x) x[2])
+
+# UI
+ui <- fluidPage(
+  titlePanel("Chess Data Explorer"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("winner", "Winner:", 
+                  choices = c("All", unique(chess_data$winner)), 
+                  selected = "All"),
+      
+      selectInput("victory_status", "Victory Status:", 
+                  choices = c("All", unique(chess_data$victory_status)), 
+                  selected = "All"),
+      
+      selectInput("opening_name", "Opening Name:",
+                  choices = c("All", openings),
+                  selected = "All"),
+      
+      sliderInput("white_rating", "White Player Rating:",
+                  min = min(chess_data$white_rating, na.rm = TRUE),
+                  max = max(chess_data$white_rating, na.rm = TRUE),
+                  value = range(chess_data$white_rating, na.rm = TRUE)),
+      
+      sliderInput("black_rating", "Black Player Rating:",
+                  min = min(chess_data$black_rating, na.rm = TRUE),
+                  max = max(chess_data$black_rating, na.rm = TRUE),
+                  value = range(chess_data$black_rating, na.rm = TRUE))
+    ),
+    
+    mainPanel(
+      tabsetPanel(
+        tabPanel("Win Counts by Opening", plotOutput("winCountsPlot")),
+        tabPanel("Win Counts by Time Control", plotOutput("timeControlPlot")),
+        tabPanel("Move Heatmap", plotOutput("moveHeatmap")),
+        #tabPanel("Ratings Scatter", plotOutput("ratingScatter")),
+        #tabPanel("Duration vs Rating Diff", plotOutput("durationVsRating")),
+        tabPanel("Top First Moves for White", plotOutput("firstMovesWhitePlot")),
+        tabPanel("Top First Moves for Black", plotOutput("firstMovesBlackPlot"))
+      )
+    )
+  )
+)
+
+# Server
+server <- function(input, output) {
+  
+  filtered_data <- reactive({
+    data <- chess_data
+    
+    if (input$victory_status != "All") {
+      data <- data %>% filter(victory_status == input$victory_status)
+    }
+    
+    if (input$winner != "All") {
+      data <- data %>% filter(winner == input$winner)
+    }
+    
+    if (input$opening_name != "All") {
+      data <- data %>% filter(opening_name == input$opening_name)
+    }
+    
+    data <- data %>%
+      filter(white_rating >= input$white_rating[1],
+             white_rating <= input$white_rating[2],
+             black_rating >= input$black_rating[1],
+             black_rating <= input$black_rating[2])
+    
+    return(data)
+  })
+  
+  output$winCountsPlot <- renderPlot({
+    win_counts <- filtered_data() %>%
+      filter(opening_name %in% top_openings) %>%
+      count(opening_name, winner) %>%
+      group_by(opening_name) %>%
+      mutate(Percentage = n / sum(n) * 100)
+    
+    ggplot(win_counts, aes(x = reorder(opening_name, -Percentage), y = Percentage, fill = winner)) +
+      geom_bar(stat = "identity", position = "stack") +
+      labs(title = "Win Counts for Top 10 Openings by Result",
+           x = "Opening Name",
+           y = "Percentage") +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  })
+  
+  output$timeControlPlot <- renderPlot({
+    win_counts_time <- filtered_data() %>%
+      count(time_control, winner) %>%
+      group_by(time_control) %>%
+      mutate(Percentage = n / sum(n) * 100)
+    
+    ggplot(win_counts_time, aes(x = reorder(time_control, -Percentage), y = Percentage, fill = winner)) +
+      geom_bar(stat = "identity", position = "stack") +
+      labs(title = "Win Counts for Time Controls by Result",
+           x = "Time Control",
+           y = "Percentage") +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  })
+  
+  output$moveHeatmap <- renderPlot({
+    extract_squares <- function(moves) {
+      move_list <- unlist(str_split(moves, " "))
+      squares <- str_extract(move_list, "[a-h][1-8]")
+      return(squares[!is.na(squares)])
+    }
+    
+    square_counts <- filtered_data() %>%
+      rowwise() %>%
+      mutate(squares = list(extract_squares(moves))) %>%
+      unnest(squares) %>%
+      count(squares) %>%
+      mutate(
+        file = substr(squares, 1, 1),
+        rank = as.integer(substr(squares, 2, 2)),
+        x = match(file, letters[1:8]),
+        y = rank
+      )
+    
+    ggplot(square_counts, aes(x = x, y = y, fill = n)) +
+      geom_tile(color = "black") +
+      scale_fill_gradient(low = "white", high = "red") +
+      scale_x_continuous(breaks = 1:8, labels = letters[1:8]) +
+      scale_y_continuous(breaks = 1:8, labels = 1:8) +
+      theme_minimal() +
+      labs(title = "Chess Move Heatmap", x = "File", y = "Rank", fill = "Move Frequency") +
+      coord_fixed()
+  })
+  
+ # output$ratingScatter <- renderPlot({
+  #  data <- filtered_data() %>% filter(game_duration < 1e6)
+    
+   # ggplot(data, aes(x = white_rating, y = black_rating)) +
+    #  geom_point(aes(color = game_duration)) +
+     # theme_minimal() +
+      #labs(title = "Black Rating vs White Rating", x = "White Player #Rating", y = "Black Rating")
+ # })
+  
+ # output$durationVsRating <- renderPlot({
+  #  data <- filtered_data() %>% filter(game_duration < 1e6)
+    
+   # ggplot(data, aes(x = rating_diff, y = game_duration)) +
+    #  geom_point(aes(color = time_control)) +
+     # theme_minimal() +
+      #facet_wrap(~time_control) +
+      #labs(title = "Game Duration vs Rating Difference", x = "Rating #Difference", y = "Game Duration")
+ # })
+  
+  output$firstMovesWhitePlot <- renderPlot({
+    first_white_move <- table(filtered_data()$first_white_move)
+    first_white_move <- sort(first_white_move, decreasing = TRUE)
+    first_white_move <- first_white_move[1:5]
+    
+    
+    first_white_move_df <- data.frame(
+      move = names(first_white_move),
+      frequency = as.integer(first_white_move)
+      )
+
+    
+    ggplot(first_white_move_df, aes(x = move, y = frequency)) +
+      geom_bar(stat = "identity", fill = "steelblue") +
+      theme_minimal(base_size = 14) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+      labs(
+        title = "Top 5 First Moves for White",
+        x = "Move",
+        y = "Frequency"
+      )
+
+  })
+  output$firstMovesBlackPlot <- renderPlot({  
+    first_black_move <- table(filtered_data()$first_black_move)
+    first_black_move <- sort(first_black_move, decreasing = TRUE)
+    first_black_move <- first_black_move[1:5]
+    
+    first_black_move_df <- data.frame(
+      move = names(first_black_move),
+      frequency = as.integer(first_black_move)
+      )
+   
+    ggplot(first_black_move_df, aes(x = move, y = frequency)) +
+      geom_bar(stat = "identity", fill = "steelblue") +
+      theme_minimal(base_size = 14) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+      labs(
+        title = "Top 5 First Moves for Black",
+        x = "Move",
+        y = "Frequency"
+      )
+  })
+}
+
+# Run the application 
+shinyApp(ui = ui, server = server)
+
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
