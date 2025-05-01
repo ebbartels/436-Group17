@@ -17,7 +17,8 @@ library(tidyr)
 library(stringr)
 
 # Load the data
-chess_data <- read.csv("C:\\Users\\emmet\\Downloads\\games.csv")
+chess_data <- read.csv("games.csv")
+
 
 # Preprocessing
 top_openings <- chess_data %>%
@@ -106,8 +107,6 @@ ui <- fluidPage(
         tabPanel("Win Counts by Opening", plotOutput("winCountsPlot")),
         tabPanel("Win Counts by Time Control", plotOutput("timeControlPlot")),
         tabPanel("Move Heatmap", plotOutput("moveHeatmap")),
-        #tabPanel("Ratings Scatter", plotOutput("ratingScatter")),
-        #tabPanel("Duration vs Rating Diff", plotOutput("durationVsRating")),
         tabPanel("Top First Moves for White", plotOutput("firstMovesWhitePlot")),
         tabPanel("Top First Moves for Black", plotOutput("firstMovesBlackPlot"))
       )
@@ -117,6 +116,45 @@ ui <- fluidPage(
 
 # Server
 server <- function(input, output) {
+  
+  filtered_data_no_opening_winner_filter <- reactive({
+  data <- chess_data
+  
+  
+  if (input$victory_status != "All") {
+    data <- data %>% filter(victory_status == input$victory_status)
+  }
+  
+  
+  data <- data %>%
+    filter(white_rating >= input$white_rating[1],
+           white_rating <= input$white_rating[2],
+           black_rating >= input$black_rating[1],
+           black_rating <= input$black_rating[2])
+  
+  return(data)
+})
+  
+  filtered_data_no_winner <- reactive({
+    data <- chess_data
+    
+    if (input$victory_status != "All") {
+      data <- data %>% filter(victory_status == input$victory_status)
+    }
+    
+    
+    if (input$opening_name != "All") {
+      data <- data %>% filter(opening_name == input$opening_name)
+    }
+    
+    data <- data %>%
+      filter(white_rating >= input$white_rating[1],
+             white_rating <= input$white_rating[2],
+             black_rating >= input$black_rating[1],
+             black_rating <= input$black_rating[2])
+    
+    return(data)
+  })
   
   filtered_data <- reactive({
     data <- chess_data
@@ -143,37 +181,51 @@ server <- function(input, output) {
   })
   
   output$winCountsPlot <- renderPlot({
-    win_counts <- filtered_data() %>%
-      filter(opening_name %in% top_openings) %>%
-      count(opening_name, winner) %>%
-      group_by(opening_name) %>%
-      mutate(Percentage = n / sum(n) * 100)
-    
-    ggplot(win_counts, aes(x = reorder(opening_name, -Percentage), y = Percentage, fill = winner)) +
-      geom_bar(stat = "identity", position = "stack") +
-      labs(title = "Win Counts for Top 10 Openings by Result",
-           x = "Opening Name",
-           y = "Percentage") +
-      theme_minimal() +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1))
-  })
+    validate(
+    need(nrow(filtered_data_no_opening_winner_filter()) > 0, "No data to display with current filters.")
+  )
+  win_counts <- filtered_data_no_opening_winner_filter() %>%
+    filter(opening_name %in% top_openings) %>%
+    count(opening_name, winner) %>%
+    group_by(opening_name) %>%
+    mutate(Percentage = n / sum(n) * 100)
+
+  ggplot(win_counts, aes(x = reorder(opening_name, -Percentage), y = Percentage, fill = winner)) +
+    geom_bar(stat = "identity", position = "stack") +
+    geom_text(aes(label = paste0(round(Percentage, 1), "%")),
+              position = position_stack(vjust = 0.5), size = 3, color = "white") +
+    labs(title = "Win Counts for Top 10 Openings by Result",
+         x = "Opening Name",
+         y = "Percentage") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+})
   
   output$timeControlPlot <- renderPlot({
-    win_counts_time <- filtered_data() %>%
-      count(time_control, winner) %>%
-      group_by(time_control) %>%
-      mutate(Percentage = n / sum(n) * 100)
+    validate(
+    need(nrow(filtered_data_no_winner()) > 0, "No data to display with current filters.")
+  )
     
-    ggplot(win_counts_time, aes(x = reorder(time_control, -Percentage), y = Percentage, fill = winner)) +
-      geom_bar(stat = "identity", position = "stack") +
-      labs(title = "Win Counts for Time Controls by Result",
-           x = "Time Control",
-           y = "Percentage") +
-      theme_minimal() +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1))
-  })
+  win_counts_time <- filtered_data_no_winner() %>%
+    count(time_control, winner) %>%
+    group_by(time_control) %>%
+    mutate(Percentage = n / sum(n) * 100)
+
+  ggplot(win_counts_time, aes(x = reorder(time_control, -Percentage), y = Percentage, fill = winner)) +
+    geom_bar(stat = "identity", position = "stack") +
+    geom_text(aes(label = paste0(round(Percentage, 1), "%")),
+              position = position_stack(vjust = 0.5), size = 4, color = "white") +
+    labs(title = "Win Counts for Time Controls by Result",
+         x = "Time Control",
+         y = "Percentage") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+})
   
   output$moveHeatmap <- renderPlot({
+    validate(
+    need(nrow(filtered_data()) > 0, "No data to display with current filters.")
+  )
     extract_squares <- function(moves) {
       move_list <- unlist(str_split(moves, " "))
       squares <- str_extract(move_list, "[a-h][1-8]")
@@ -202,26 +254,12 @@ server <- function(input, output) {
       coord_fixed()
   })
   
- # output$ratingScatter <- renderPlot({
-  #  data <- filtered_data() %>% filter(game_duration < 1e6)
-    
-   # ggplot(data, aes(x = white_rating, y = black_rating)) +
-    #  geom_point(aes(color = game_duration)) +
-     # theme_minimal() +
-      #labs(title = "Black Rating vs White Rating", x = "White Player #Rating", y = "Black Rating")
- # })
-  
- # output$durationVsRating <- renderPlot({
-  #  data <- filtered_data() %>% filter(game_duration < 1e6)
-    
-   # ggplot(data, aes(x = rating_diff, y = game_duration)) +
-    #  geom_point(aes(color = time_control)) +
-     # theme_minimal() +
-      #facet_wrap(~time_control) +
-      #labs(title = "Game Duration vs Rating Difference", x = "Rating #Difference", y = "Game Duration")
- # })
   
   output$firstMovesWhitePlot <- renderPlot({
+    validate(
+    need(nrow(filtered_data()) > 0, "No data to display with current filters.")
+  )
+    
     first_white_move <- table(filtered_data()$first_white_move)
     first_white_move <- sort(first_white_move, decreasing = TRUE)
     first_white_move <- first_white_move[1:5]
@@ -245,6 +283,10 @@ server <- function(input, output) {
 
   })
   output$firstMovesBlackPlot <- renderPlot({  
+    
+    validate(
+    need(nrow(filtered_data()) > 0, "No data to display with current filters.")
+  )
     first_black_move <- table(filtered_data()$first_black_move)
     first_black_move <- sort(first_black_move, decreasing = TRUE)
     first_black_move <- first_black_move[1:5]
